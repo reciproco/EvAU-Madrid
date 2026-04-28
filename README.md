@@ -33,6 +33,15 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
+Para desarrollar (tests, linter):
+
+```bash
+pip install -r requirements-dev.txt
+pytest                     # ejecuta el suite de tests
+ruff check .               # linter
+ruff check --fix .         # auto-arregla lo que pueda
+```
+
 ## Uso
 
 ### 1) Comprobar que funciona en un centro
@@ -115,8 +124,13 @@ python scraper_evau_madrid.py scrape --input centros.csv --output evau.csv
 Una vez tengas `evau.csv`, genera la SPA de consulta:
 
 ```bash
-python build_web.py
+python build_web.py --centros centros.csv   # o el listado windows-1252 del buscador
 ```
+
+El flag `--centros` es opcional pero recomendado: mergea la dirección completa
+(calle, nº, CP, municipio) por código de centro y publica un enlace a
+OpenStreetMap en cada fila. Sin el flag, el icono OSM seguirá funcionando
+con una búsqueda por nombre + municipio.
 
 Esto crea `web/evau.js` con los datos inlineados. Para verlo:
 

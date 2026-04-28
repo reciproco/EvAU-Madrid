@@ -1,3 +1,6 @@
-playwright>=1.40
-beautifulsoup4>=4.12
-lxml>=4.9
+# Dependencias runtime del scraper. Versiones acotadas a la mayor (compat-major)
+# para evitar que un breaking change futuro rompa instalaciones limpias.
+# Si quieres reproducibilidad bit a bit, usa `pip freeze > requirements.lock`.
+playwright>=1.58,<2.0
+beautifulsoup4>=4.14,<5.0
+lxml>=6.1,<7.0

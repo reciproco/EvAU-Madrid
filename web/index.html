@@ -4,6 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>EvAU Madrid — Comparador de centros</title>
+
+  <meta name="description" content="Ranking, evolución y comparativa de las notas medias de la EvAU para todos los centros de la Comunidad de Madrid (datos públicos de la Consejería de Educación).">
+  <meta name="theme-color" content="#b32d2e">
+
+  <meta property="og:type"        content="website">
+  <meta property="og:title"       content="EvAU Madrid — Comparador de centros">
+  <meta property="og:description" content="Consulta y compara las notas medias de la EvAU de los centros educativos de la Comunidad de Madrid: ranking, evolución por curso y comparador entre centros.">
+  <meta property="og:locale"      content="es_ES">
+  <meta name="twitter:card"       content="summary">
+
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,21 +28,37 @@
     </div>
   </header>
 
+  <noscript>
+    <p style="padding:1rem 1.25rem;color:#b32d2e">
+      Esta web necesita JavaScript para mostrar los datos. Actívalo y recarga.
+    </p>
+  </noscript>
+
   <section class="filters" aria-label="Filtros">
+    <label class="visually-hidden" for="search">Buscar centro</label>
     <input type="search" id="search" placeholder="Buscar por nombre o municipio…" autocomplete="off">
+
+    <label class="visually-hidden" for="area">Área territorial</label>
     <select id="area">
       <option value="">Todas las áreas</option>
     </select>
+
+    <label class="visually-hidden" for="titularidad">Titularidad</label>
     <select id="titularidad">
       <option value="">Toda titularidad</option>
     </select>
+
+    <label class="visually-hidden" for="curso">Curso</label>
     <select id="curso" title="Curso para el ranking"></select>
+
+    <label class="visually-hidden" for="metrica">Métrica del ranking</label>
     <select id="metrica" title="Métrica del ranking">
       <option value="nm">Nota media</option>
       <option value="na">Nota media aptos</option>
       <option value="pa">% aptos</option>
       <option value="np">Nº presentados</option>
     </select>
+
     <button id="reset" type="button" class="ghost">Limpiar</button>
   </section>
 
@@ -45,13 +72,13 @@
         <table id="table">
           <thead>
             <tr>
-              <th class="rank" data-sort="pos" title="Puesto en el ranking global de toda Madrid según la métrica seleccionada">Pos.</th>
-              <th data-sort="delta" class="num" title="Cambio de posición en el ranking global respecto al curso anterior">Δ</th>
-              <th data-sort="n">Centro</th>
-              <th data-sort="mun">Municipio</th>
-              <th data-sort="a">Área</th>
-              <th data-sort="tit">Titularidad</th>
-              <th data-sort="metric" class="num active">Métrica</th>
+              <th class="rank" data-sort="pos" aria-sort="none" title="Puesto en el ranking global de toda Madrid según la métrica seleccionada">Pos.</th>
+              <th data-sort="delta" class="num" aria-sort="none" title="Cambio de posición en el ranking global respecto al curso anterior">Δ</th>
+              <th data-sort="n" aria-sort="none">Centro</th>
+              <th data-sort="mun" aria-sort="none">Municipio</th>
+              <th data-sort="a" aria-sort="none">Área</th>
+              <th data-sort="tit" aria-sort="none">Titularidad</th>
+              <th data-sort="metric" class="num active" aria-sort="descending">Métrica</th>
               <th class="num">vs CM</th>
             </tr>
           </thead>
@@ -61,12 +88,16 @@
     </section>
 
     <aside class="detail" id="detail" aria-label="Detalle del centro">
-      <div class="detail-empty">
-        <p>Selecciona un centro de la lista para ver la evolución de sus notas a lo largo de los cursos.</p>
-        <p class="hint">Sugerencia: pulsa el botón <strong>+</strong> de varias filas para superponerlas en el gráfico.</p>
+      <button type="button" class="detail-close" id="detail-close" aria-label="Cerrar detalle">×</button>
+      <div class="detail-body" id="detail-body">
+        <div class="detail-empty">
+          <p>Selecciona un centro de la lista para ver la evolución de sus notas a lo largo de los cursos.</p>
+          <p class="hint">Sugerencia: pulsa el botón <strong>+</strong> de varias filas para superponerlas en el gráfico.</p>
+        </div>
       </div>
     </aside>
   </main>
+  <div id="detail-backdrop" class="detail-backdrop" hidden></div>
 
   <div id="compare-bar" class="compare-bar hidden" aria-live="polite">
     <span id="compare-text"></span>
@@ -74,22 +105,22 @@
     <button id="compare-clear" type="button" class="ghost">Quitar todos</button>
   </div>
 
-  <dialog id="compare-dialog" class="compare-dialog">
+  <dialog id="compare-dialog" class="compare-dialog" aria-labelledby="compare-dialog-title">
     <header>
-      <h2>Comparativa de centros</h2>
+      <h2 id="compare-dialog-title">Comparativa de centros</h2>
       <button id="compare-close" type="button" aria-label="Cerrar">×</button>
     </header>
     <div class="metric-tabs" role="tablist">
-      <button data-metric="nm" class="active">Nota media</button>
-      <button data-metric="na">Nota media aptos</button>
-      <button data-metric="pa">% aptos</button>
-      <button data-metric="np">Nº presentados</button>
+      <button type="button" data-metric="nm" class="active">Nota media</button>
+      <button type="button" data-metric="na">Nota media aptos</button>
+      <button type="button" data-metric="pa">% aptos</button>
+      <button type="button" data-metric="np">Nº presentados</button>
     </div>
     <div class="chart-host"><canvas id="compare-chart"></canvas></div>
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script src="evau.js"></script>
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -103,12 +103,25 @@ body {
   background: var(--surface-2);
   color: var(--text);
   border-radius: var(--radius-sm);
-  outline: none;
 }
-.filters input:focus,
-.filters select:focus {
+.filters input:focus-visible,
+.filters select:focus-visible {
+  outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Label oculto visualmente pero accesible para lectores de pantalla. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 .filters input[type="search"] {
   flex: 1 1 280px;
@@ -126,7 +139,11 @@ button {
   font-weight: 500;
   height: 34px;
 }
-button:hover { filter: brightness(1.05); }
+button:not(.ghost):hover { filter: brightness(1.05); }
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 button.ghost {
   background: transparent;
   color: var(--text-soft);
@@ -142,10 +159,6 @@ button.ghost:hover { color: var(--text); border-color: var(--text-faint); }
   gap: 16px;
   padding: 16px 20px;
   min-height: 0;
-}
-@media (max-width: 1024px) {
-  .layout { grid-template-columns: 1fr; }
-  .detail { order: -1; }
 }
 
 /* ---- Tabla ranking ---- */
@@ -180,6 +193,7 @@ table {
 thead th {
   position: sticky;
   top: 0;
+  z-index: 2;          /* tapa los iconos con opacity de las filas que pasan por debajo */
   background: var(--surface);
   text-align: left;
   font-weight: 600;
@@ -189,6 +203,9 @@ thead th {
   letter-spacing: .03em;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
+  /* Refuerzo visual: una sombrita inferior fina para que la cabecera se
+     "despegue" del contenido al hacer scroll. */
+  box-shadow: 0 1px 0 var(--border);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
@@ -212,7 +229,16 @@ tbody tr {
   transition: background .12s;
 }
 tbody tr:hover { background: var(--surface-2); }
+tbody tr:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  background: var(--surface-2);
+}
 tbody tr.selected { background: var(--accent-soft); }
+thead th[data-sort]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 tbody td {
   padding: 8px 10px;
   vertical-align: middle;
@@ -220,16 +246,32 @@ tbody td {
 tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody td.rank { color: var(--text-faint); text-align: right; font-variant-numeric: tabular-nums; }
 tbody td.center-name { font-weight: 500; }
+tbody td.center-name .center-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;          /* iguala la altura de los botones */
+}
+.row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+tbody td.center-name .center-name-text {
+  min-width: 0;
+  line-height: 1.35;          /* tighter para que el centro óptico coincida */
+}
 tbody td.center-name .add-compare {
-  display: inline-block;
-  width: 18px; height: 18px; line-height: 16px;
-  text-align: center; border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px; height: 20px;
+  border-radius: 4px;
   border: 1px solid var(--border);
-  margin-right: 8px;
   color: var(--text-soft);
   font-size: 14px; font-weight: 700;
   background: var(--surface);
-  vertical-align: -3px;
 }
 tbody td.center-name .add-compare.on {
   background: var(--accent);
@@ -239,23 +281,77 @@ tbody td.center-name .add-compare.on {
 tbody td.center-name .add-compare:hover { color: var(--accent); border-color: var(--accent); }
 tbody td.center-name .add-compare.on:hover { color: #fff; }
 
+/* Enlace a OpenStreetMap (icono pin como acción de fila). */
+.map-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  opacity: .7;
+  text-decoration: none;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  line-height: 0;
+  transition: opacity .12s, background .12s, border-color .12s;
+}
+.map-link:hover {
+  opacity: 1;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.map-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+/* En la fila seleccionada el fondo ya es accent-soft → diferenciamos. */
+tbody tr.selected .map-link:hover { background: rgba(255, 255, 255, .35); }
+
+/* Variante con texto (panel de detalle): chip más ancha, el texto en color
+   normal para que sea legible y el icono mantiene el rojo. */
+.map-link-text {
+  width: auto;
+  height: auto;
+  padding: 4px 8px;
+  color: var(--text);
+  line-height: normal;
+  opacity: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.map-link-text:hover { background: var(--accent-soft); border-color: var(--accent); }
+.map-link-text svg { color: var(--accent); }
+.map-link-text span { font-size: 12px; }
+
 .delta { font-size: 11px; color: var(--text-faint); margin-left: 4px; }
 .delta.good { color: var(--good); }
 .delta.bad  { color: var(--bad); }
 
 /* Δ de posición en el ranking global */
-td.rank-delta-cell { padding-right: 6px; padding-left: 6px; }
+tbody td.rank-delta-cell {
+  text-align: center;
+  padding-right: 6px;
+  padding-left: 6px;
+}
 .rank-delta {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 36px;
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: .02em;
   white-space: nowrap;
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 4px;
   background: var(--surface-2);
   border: 1px solid transparent;
+  vertical-align: middle;
 }
 .rank-delta.up   { color: var(--good); background: color-mix(in srgb, var(--good) 14%, var(--surface-2)); }
 .rank-delta.down { color: var(--bad);  background: color-mix(in srgb, var(--bad)  14%, var(--surface-2)); }
@@ -278,6 +374,32 @@ td.rank-delta-cell { padding-right: 6px; padding-left: 6px; }
   overflow: auto;
   box-shadow: var(--shadow);
   min-height: 380px;
+  position: relative;
+}
+.detail-close {
+  display: none;  /* sólo visible en móvil */
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  font-size: 22px;
+  line-height: 1;
+  z-index: 1;
+}
+.detail-close:hover { color: var(--text); }
+.detail-backdrop {
+  display: none;  /* sólo visible en móvil */
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 14, 22, .55);
+  backdrop-filter: blur(2px);
+  z-index: 55;
 }
 .detail-empty {
   color: var(--text-soft);
@@ -371,7 +493,7 @@ td.rank-delta-cell { padding-right: 6px; padding-left: 6px; }
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 8px 8px 8px 16px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.18);
+  box-shadow: var(--shadow);
   display: flex;
   gap: 8px;
   align-items: center;
@@ -390,7 +512,7 @@ dialog.compare-dialog {
   color: var(--text);
   width: min(90vw, 920px);
   max-height: 86vh;
-  box-shadow: 0 24px 60px rgba(0,0,0,.3);
+  box-shadow: var(--shadow);
 }
 dialog::backdrop { background: rgba(10, 14, 22, .55); backdrop-filter: blur(2px); }
 dialog header {
@@ -410,3 +532,125 @@ dialog header button {
 dialog header button:hover { background: var(--surface-2); color: var(--text); }
 .compare-dialog .metric-tabs { margin: 14px 16px 8px; }
 .compare-dialog .chart-host { height: 480px; padding: 0 16px 16px; }
+
+/* Fallback si Chart.js no carga (CDN caído / sin red). */
+.chart-fallback {
+  margin: 0;
+  padding: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* =========================================================================
+   RESPONSIVE
+   - 1024px : panel detalle a una columna (debajo de la tabla, no encima)
+   - 720px  : ocultar columnas secundarias, detalle como bottom-sheet,
+              filtros apilados, compare-bar/dialog adaptados
+   ========================================================================= */
+
+@media (max-width: 1024px) {
+  .layout {
+    grid-template-columns: 1fr;
+    padding: 12px;
+    gap: 12px;
+  }
+  .topbar { padding: 12px 14px; }
+  .filters { padding: 10px 14px; }
+}
+
+@media (max-width: 720px) {
+  body { font-size: 13px; }
+  .topbar { padding: 10px 12px; }
+  .brand h1 { font-size: 16px; }
+  .theme-hint { display: none; }
+
+  /* Filtros: cada control ocupa toda la fila si es necesario. */
+  .filters {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+  .filters input[type="search"] { flex: 1 1 100%; min-width: 0; }
+  .filters select { flex: 1 1 calc(50% - 3px); min-width: 0; }
+  .filters #reset { flex: 1 1 100%; }
+
+  /* Layout de columna única. La tabla manda. */
+  .layout { padding: 8px; gap: 8px; }
+
+  /* Ocultamos columnas que también aparecen en el detalle del centro:
+     Municipio (4), Área (5), Titularidad (6).
+     Pos | Δ | Centro | Métrica | vs CM siguen visibles. */
+  thead th:nth-child(4),
+  thead th:nth-child(5),
+  thead th:nth-child(6),
+  tbody td:nth-child(4),
+  tbody td:nth-child(5),
+  tbody td:nth-child(6) {
+    display: none;
+  }
+  thead th, tbody td { padding: 8px 6px; }
+
+  /* El panel de detalle pasa a ser un bottom-sheet deslizable. */
+  .detail {
+    position: fixed;
+    inset: auto 0 0 0;
+    height: 85vh;
+    margin: 0;
+    border: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+    transform: translateY(105%);
+    transition: transform .25s ease-out;
+    z-index: 60;
+    min-height: 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, .25);
+  }
+  .detail.open { transform: translateY(0); }
+  .detail-empty { display: none; }
+  .detail-close { display: block; }
+  .detail-backdrop:not([hidden]) { display: block; }
+
+  /* El gráfico del detalle más bajo para que quepa en pantallas cortas. */
+  .chart-host { height: 220px; }
+
+  /* Compare-bar más compacta. */
+  .compare-bar {
+    bottom: 12px;
+    padding: 6px 6px 6px 12px;
+    font-size: 12px;
+    max-width: calc(100vw - 16px);
+  }
+  .compare-bar button { height: 28px; font-size: 11px; padding: 0 10px; }
+
+  /* Compare dialog ocupa toda la pantalla. */
+  dialog.compare-dialog {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    border: none;
+  }
+  .compare-dialog .chart-host { height: calc(100vh - 180px); padding: 0 8px 8px; }
+  .compare-dialog .metric-tabs {
+    margin: 10px 8px 4px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    width: calc(100% - 16px);
+  }
+  .compare-dialog .metric-tabs button { white-space: nowrap; }
+
+  .ranking-head { padding: 8px 12px; font-size: 13px; }
+}
+
+@media (max-width: 1024px) and (min-width: 721px) {
+  /* En tablet, el panel está debajo (no es bottom-sheet) y siempre visible. */
+  .detail { order: 1; }
+}
+
+/* En móviles muy estrechos ocultamos también vs CM. */
+@media (max-width: 380px) {
+  thead th:nth-child(8),
+  tbody td:nth-child(8) { display: none; }
+}

@@ -43,17 +43,20 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import csv
+import io
 import json
+import logging
+import random
 import re
-import sys
 import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
 
 from bs4 import BeautifulSoup
-from playwright.async_api import async_playwright, Page, BrowserContext, TimeoutError as PWTimeout
+from playwright.async_api import Page, async_playwright
+from playwright.async_api import TimeoutError as PWTimeout
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -66,11 +69,15 @@ URL_BUSCADOR = f"{BASE}/MostrarConsultaGeneral.icm"
 # Pausas entre peticiones — sé amable con el servidor de la Comunidad de Madrid
 DELAY_ENTRE_CENTROS = (1.5, 3.0)   # segundos (rango aleatorio)
 TIMEOUT_PAGINA_MS = 30_000
+PAUSA_TRAS_CLICK_RADIO_S = 0.8     # margen extra para AJAX si no detectamos cambio
+PAUSA_POST_PESTANA_S = 0.5
 
 USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    "EvAU-Madrid-Scraper/1.0 "
+    "(+https://github.com/reciproco/EvAU-Madrid; uso académico, datos públicos)"
 )
+
+logger = logging.getLogger("evau_scraper")
 
 
 # =============================================================================
@@ -119,8 +126,7 @@ def num_es(s: str) -> str:
     return s  # devolver tal cual si no encaja
 
 
-async def random_delay():
-    import random
+async def random_delay() -> None:
     a, b = DELAY_ENTRE_CENTROS
     await asyncio.sleep(random.uniform(a, b))
 
@@ -129,7 +135,7 @@ async def random_delay():
 # EXTRACCIÓN DE DATOS DEL HTML
 # =============================================================================
 
-def parse_datos_centro(html: str) -> dict:
+def parse_datos_centro(html: str) -> dict[str, str]:
     """Extrae los metadatos básicos del centro de la cabecera de la ficha."""
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=False)
@@ -216,7 +222,18 @@ def parse_tabla_indicador_pau(html: str) -> dict[str, tuple[str, str]]:
     return out
 
 
-def parse_tabla_evau(html: str, codigo: str, meta: dict) -> list[ResultadoEvAU]:
+_CAMPOS_LEGACY = (
+    "nota_media_centro",
+    "nota_media_cm",
+    "n_presentados",
+    "pct_aptos_centro",
+    "pct_aptos_cm",
+    "nota_media_aptos_centro",
+    "nota_media_aptos_cm",
+)
+
+
+def parse_tabla_evau(html: str, codigo: str, meta: dict[str, str]) -> list[ResultadoEvAU]:
     """
     Parser de respaldo (formato no-transpuesto, fila por curso). Se mantiene
     para compatibilidad con `test_parsers.py` y como fallback si el portal
@@ -225,29 +242,22 @@ def parse_tabla_evau(html: str, codigo: str, meta: dict) -> list[ResultadoEvAU]:
     soup = BeautifulSoup(html, "lxml")
     resultados: list[ResultadoEvAU] = []
 
-    candidatas = []
-    for table in soup.find_all("table"):
-        txt = table.get_text(" ", strip=True).lower()
-        if any(k in txt for k in ("bloque obligatorio", "fase general", "evau", "pau")):
-            candidatas.append(table)
+    candidatas = [
+        table for table in soup.find_all("table")
+        if any(k in table.get_text(" ", strip=True).lower()
+               for k in ("bloque obligatorio", "fase general", "evau", "pau"))
+    ]
 
     for table in candidatas:
         for tr in table.find_all("tr"):
             celdas = [limpiar(td.get_text(" ", strip=True)) for td in tr.find_all(["td", "th"])]
-            if not celdas:
+            if not celdas or not re.match(r"^\d{4}[/\-]\d{2,4}", celdas[0]):
                 continue
-            if re.match(r"^\d{4}[/\-]\d{2,4}", celdas[0]):
-                r = ResultadoEvAU(codigo_centro=codigo, **meta)
-                r.curso = celdas[0]
-                nums = [num_es(c) for c in celdas[1:]]
-                if len(nums) >= 1: r.nota_media_centro      = nums[0]
-                if len(nums) >= 2: r.nota_media_cm          = nums[1]
-                if len(nums) >= 3: r.n_presentados          = nums[2]
-                if len(nums) >= 4: r.pct_aptos_centro       = nums[3]
-                if len(nums) >= 5: r.pct_aptos_cm           = nums[4]
-                if len(nums) >= 6: r.nota_media_aptos_centro = nums[5]
-                if len(nums) >= 7: r.nota_media_aptos_cm    = nums[6]
-                resultados.append(r)
+            r = ResultadoEvAU(codigo_centro=codigo, **meta)
+            r.curso = celdas[0]
+            for nombre, valor in zip(_CAMPOS_LEGACY, (num_es(c) for c in celdas[1:]), strict=False):
+                setattr(r, nombre, valor)
+            resultados.append(r)
 
     return resultados
 
@@ -256,7 +266,67 @@ def parse_tabla_evau(html: str, codigo: str, meta: dict) -> list[ResultadoEvAU]:
 # INTERACCIÓN CON LA PÁGINA
 # =============================================================================
 
-async def obtener_evau_de_centro(page: Page, codigo: str) -> tuple[dict, list[ResultadoEvAU], str]:
+async def _activar_pestana_resultados(page: Page) -> None:
+    """Pulsa la pestaña 'RESULTADOS ACADÉMICOS' probando varios selectores."""
+    for selector in (
+        "text=/RESULTADOS\\s*ACAD/i",
+        "td:has-text('RESULTADOS')",
+        "a:has-text('RESULTADOS')",
+    ):
+        try:
+            await page.click(selector, timeout=3000)
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+            return
+        except Exception as e:
+            logger.debug("Pestaña RESULTADOS — selector %r falló: %s", selector, e)
+    logger.warning("No se pudo activar la pestaña 'RESULTADOS ACADÉMICOS'")
+
+
+async def _seleccionar_indicador_pau(page: Page, valor: str, img_pau_id: str | None) -> None:
+    """Pulsa el radio del indicador y espera a que la tabla se refresque."""
+    src_previo = None
+    if img_pau_id:
+        src_previo = await page.evaluate(
+            "(id) => { const el = document.getElementById(id); return el ? el.src : null; }",
+            img_pau_id,
+        )
+
+    await page.click(
+        f"input[type='radio'][name^='tipoResPAU.grafica'][value='{valor}']",
+        timeout=3000,
+    )
+
+    if img_pau_id and src_previo:
+        try:
+            await page.wait_for_function(
+                "([id, prev]) => { const el = document.getElementById(id); return el && el.src !== prev; }",
+                arg=[img_pau_id, src_previo],
+                timeout=8_000,
+            )
+            return
+        except PWTimeout:
+            logger.debug("Cambio de src de la imagen no detectado para indicador %s", valor)
+
+    # Fallback: esperar networkidle + pausa fija si no detectamos cambio de img.
+    with contextlib.suppress(PWTimeout):
+        await page.wait_for_load_state("networkidle", timeout=8_000)
+    await asyncio.sleep(PAUSA_TRAS_CLICK_RADIO_S)
+
+
+# Map indicador → (valor del radio, par de campos del dataclass).
+# El segundo elemento del par es None cuando el indicador no expone valor de CM
+# (caso "Nº presentados", que en el portal solo muestra fila Centro).
+_INDICADORES_PAU: tuple[tuple[str, str, tuple[str, str | None]], ...] = (
+    ("0", "nota_media",        ("nota_media_centro",       "nota_media_cm")),
+    ("1", "n_presentados",     ("n_presentados",           None)),
+    ("2", "pct_aptos",         ("pct_aptos_centro",        "pct_aptos_cm")),
+    ("3", "nota_media_aptos",  ("nota_media_aptos_centro", "nota_media_aptos_cm")),
+)
+
+
+async def obtener_evau_de_centro(
+    page: Page, codigo: str,
+) -> tuple[dict[str, str], list[ResultadoEvAU], str]:
     """
     Para un código de centro, navega a su ficha, activa la pestaña
     "RESULTADOS ACADÉMICOS" y recorre los 4 radios del bloque PAU/EVAU
@@ -266,41 +336,17 @@ async def obtener_evau_de_centro(page: Page, codigo: str) -> tuple[dict, list[Re
     Devuelve (metadatos, lista_de_filas, html_capturado).
     """
     url = f"{URL_FICHA}?cdCentro={codigo}"
-
     await page.goto(url, wait_until="domcontentloaded", timeout=TIMEOUT_PAGINA_MS)
 
     html_inicial = await page.content()
     meta = parse_datos_centro(html_inicial)
 
-    # ---- Activar la pestaña RESULTADOS ACADÉMICOS ----
-    for selector in [
-        "text=/RESULTADOS\\s*ACAD/i",
-        "td:has-text('RESULTADOS')",
-        "a:has-text('RESULTADOS')",
-    ]:
-        try:
-            await page.click(selector, timeout=3000)
-            await page.wait_for_load_state("networkidle", timeout=10_000)
-            break
-        except Exception:
-            continue
-    await asyncio.sleep(0.5)
-
-    # ---- Recorrer los 4 indicadores PAU/EVAU ----
-    # El bloque PAU/EVAU está en una "grafica" cuyo número varía entre centros.
-    # Los radios siguen el patrón name="tipoResPAU.graficaN" con value 0..3.
-    indicadores = [
-        ("0", "nota_media"),
-        ("1", "n_presentados"),
-        ("2", "pct_aptos"),
-        ("3", "nota_media_aptos"),
-    ]
-    datos: dict[str, dict[str, tuple[str, str]]] = {}
-    html_final = await page.content()
+    await _activar_pestana_resultados(page)
+    await asyncio.sleep(PAUSA_POST_PESTANA_S)
 
     # Localizar la <img> del gráfico PAU/EVAU para usar el cambio de src como
     # señal de que la AJAX de mostrarGrafica() ya ha refrescado la tabla.
-    img_pau_id = await page.evaluate("""
+    img_pau_id: str | None = await page.evaluate("""
         () => {
             const radio = document.querySelector("input[name^='tipoResPAU.grafica']");
             if (!radio) return null;
@@ -309,76 +355,36 @@ async def obtener_evau_de_centro(page: Page, codigo: str) -> tuple[dict, list[Re
         }
     """)
 
-    async def parsear_indicador_actual(clave: str):
-        nonlocal html_final
-        html_final = await page.content()
+    # Recorrer los 4 indicadores. Para el primero (value=0) la tabla ya está en
+    # la página tras activar la pestaña — no hace falta clicar el radio.
+    datos: dict[str, dict[str, tuple[str, str]]] = {}
+    html_final = await page.content()
+
+    for valor, clave, _ in _INDICADORES_PAU:
+        if valor != "0":
+            try:
+                await _seleccionar_indicador_pau(page, valor, img_pau_id)
+            except Exception as e:
+                logger.debug("Indicador %s (%s) no clicable: %s", valor, clave, e)
+                continue
+            html_final = await page.content()
         tabla = parse_tabla_indicador_pau(html_final)
         if tabla:
             datos[clave] = tabla
 
-    async def click_y_esperar(valor: str):
-        """Pulsa el radio del indicador y espera a que la tabla se refresque."""
-        if img_pau_id:
-            src_previo = await page.evaluate(
-                "(id) => { const el = document.getElementById(id); return el ? el.src : null; }",
-                img_pau_id,
-            )
-        else:
-            src_previo = None
-
-        await page.click(
-            f"input[type='radio'][name^='tipoResPAU.grafica'][value='{valor}']",
-            timeout=3000,
-        )
-
-        if img_pau_id and src_previo:
-            try:
-                await page.wait_for_function(
-                    "([id, prev]) => { const el = document.getElementById(id); return el && el.src !== prev; }",
-                    arg=[img_pau_id, src_previo],
-                    timeout=8_000,
-                )
-            except PWTimeout:
-                pass
-        else:
-            try:
-                await page.wait_for_load_state("networkidle", timeout=8_000)
-            except PWTimeout:
-                pass
-            await asyncio.sleep(0.8)
-
-    for valor, clave in indicadores:
-        if valor == "0":
-            # Indicador por defecto (Nota media): la tabla ya está en la página.
-            await parsear_indicador_actual(clave)
-        else:
-            try:
-                await click_y_esperar(valor)
-            except Exception:
-                continue
-            await parsear_indicador_actual(clave)
-
-    # ---- Combinar los 4 indicadores en filas por curso ----
-    cursos = sorted({c for d in datos.values() for c in d.keys()})
+    # Combinar los 4 indicadores en filas por curso.
+    cursos = sorted({c for d in datos.values() for c in d})
     resultados: list[ResultadoEvAU] = []
     for curso in cursos:
-        r = ResultadoEvAU(codigo_centro=codigo, **meta)
-        r.curso = curso
-        if curso in datos.get("nota_media", {}):
-            v_centro, v_cm = datos["nota_media"][curso]
-            r.nota_media_centro = num_es(v_centro)
-            r.nota_media_cm     = num_es(v_cm)
-        if curso in datos.get("n_presentados", {}):
-            v_centro, _ = datos["n_presentados"][curso]
-            r.n_presentados = num_es(v_centro)
-        if curso in datos.get("pct_aptos", {}):
-            v_centro, v_cm = datos["pct_aptos"][curso]
-            r.pct_aptos_centro = num_es(v_centro)
-            r.pct_aptos_cm     = num_es(v_cm)
-        if curso in datos.get("nota_media_aptos", {}):
-            v_centro, v_cm = datos["nota_media_aptos"][curso]
-            r.nota_media_aptos_centro = num_es(v_centro)
-            r.nota_media_aptos_cm     = num_es(v_cm)
+        r = ResultadoEvAU(codigo_centro=codigo, curso=curso, **meta)
+        for _, clave, (campo_centro, campo_cm) in _INDICADORES_PAU:
+            valores = datos.get(clave, {}).get(curso)
+            if valores is None:
+                continue
+            v_centro, v_cm = valores
+            setattr(r, campo_centro, num_es(v_centro))
+            if campo_cm is not None:
+                setattr(r, campo_cm, num_es(v_cm))
         resultados.append(r)
 
     # Fallback: si el formato transpuesto no devuelve nada (cambio de portal),
@@ -394,7 +400,7 @@ async def obtener_evau_de_centro(page: Page, codigo: str) -> tuple[dict, list[Re
 # =============================================================================
 
 class Checkpoint:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path) -> None:
         self.path = path
         self.hechos: set[str] = set()
         self.errores: dict[str, str] = {}
@@ -402,20 +408,24 @@ class Checkpoint:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 self.hechos = set(data.get("hechos", []))
-                self.errores = data.get("errores", {})
-            except Exception:
-                pass
+                self.errores = dict(data.get("errores", {}))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(
+                    "Checkpoint %s ilegible (%s); empezando de cero. "
+                    "Si tenías progreso, renombra el fichero antes de seguir.",
+                    path, e,
+                )
 
-    def marcar_hecho(self, codigo: str):
+    def marcar_hecho(self, codigo: str) -> None:
         self.hechos.add(codigo)
         self.errores.pop(codigo, None)
         self._guardar()
 
-    def marcar_error(self, codigo: str, msg: str):
+    def marcar_error(self, codigo: str, msg: str) -> None:
         self.errores[codigo] = msg
         self._guardar()
 
-    def _guardar(self):
+    def _guardar(self) -> None:
         self.path.write_text(
             json.dumps({"hechos": sorted(self.hechos), "errores": self.errores},
                        ensure_ascii=False, indent=2),
@@ -427,7 +437,7 @@ class Checkpoint:
 # COMANDOS
 # =============================================================================
 
-async def cmd_probar(codigo: str, headful: bool = False):
+async def cmd_probar(codigo: str, headful: bool = False) -> None:
     """Modo diagnóstico: scrapea un solo centro y muestra resultados."""
     print(f"\n=== DIAGNÓSTICO de centro {codigo} ===\n")
     async with async_playwright() as p:
@@ -461,12 +471,24 @@ async def cmd_probar(codigo: str, headful: bool = False):
             print("  " + " | ".join(str(d.get(c, "")) for c in cabecera))
 
 
-async def cmd_listar(output: Path, headful: bool = False):
+async def _click_primero_que_funcione(page: Page, selectores: tuple[str, ...], etiqueta: str) -> bool:
+    """Intenta varios selectores hasta que uno responde; loggea los fallos."""
+    for sel in selectores:
+        try:
+            await page.click(sel, timeout=3000)
+            return True
+        except Exception as e:
+            logger.debug("%s — selector %r falló: %s", etiqueta, sel, e)
+    logger.warning("%s — ningún selector funcionó", etiqueta)
+    return False
+
+
+async def cmd_listar(output: Path, headful: bool = False) -> None:
     """
     Navega el buscador y descarga la lista de centros con Bachillerato.
     Genera un CSV con las columnas mínimas necesarias para el scraper.
     """
-    print(f"\n=== LISTANDO CENTROS CON BACHILLERATO ===\n")
+    print("\n=== LISTANDO CENTROS CON BACHILLERATO ===\n")
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not headful)
         context = await browser.new_context(
@@ -478,65 +500,71 @@ async def cmd_listar(output: Path, headful: bool = False):
             await page.goto(URL_BUSCADOR, wait_until="domcontentloaded", timeout=TIMEOUT_PAGINA_MS)
             await asyncio.sleep(1)
 
-            # Marcar "Quieres incluir otros criterios" si aparece
-            try:
-                await page.click("text=/incluir otros criterios/i", timeout=3000)
-            except Exception:
-                pass
+            await _click_primero_que_funcione(
+                page, ("text=/incluir otros criterios/i",), "incluir otros criterios"
+            )
 
-            # Marcar todas las áreas (5 zonas)
+            # Marcar todas las áreas (5 zonas).
             try:
                 checkboxes = await page.query_selector_all("input[type='checkbox'][name*='zona' i]")
                 for cb in checkboxes:
                     if not await cb.is_checked():
                         await cb.check()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("No se pudieron marcar las zonas: %s", e)
 
-            # Filtrar por enseñanza = Bachillerato (puede haber un select o checkboxes)
+            # Filtrar por enseñanza = Bachillerato.
             try:
                 await page.check("input[type='checkbox']:near(:text('Bachillerato'))")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("No se pudo marcar 'Bachillerato': %s", e)
 
-            # Pulsar "Finalizar y ver listado"
-            for sel in ["text=/FINALIZAR Y VER LISTADO/i", "input[value*='Finalizar' i]",
-                        "button:has-text('FINALIZAR')"]:
-                try:
-                    await page.click(sel, timeout=3000)
-                    await page.wait_for_load_state("networkidle", timeout=15_000)
-                    break
-                except Exception:
-                    continue
+            await _click_primero_que_funcione(
+                page,
+                (
+                    "text=/FINALIZAR Y VER LISTADO/i",
+                    "input[value*='Finalizar' i]",
+                    "button:has-text('FINALIZAR')",
+                ),
+                "Finalizar y ver listado",
+            )
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15_000)
+            except PWTimeout:
+                logger.debug("networkidle no alcanzado tras 'Finalizar'")
 
-            # Pulsar "Descargar listado"
             async with page.expect_download(timeout=30_000) as dl_info:
-                for sel in ["text=/DESCARGAR LISTADO/i", "a:has-text('DESCARGAR')",
-                            "button:has-text('DESCARGAR')"]:
-                    try:
-                        await page.click(sel, timeout=3000)
-                        break
-                    except Exception:
-                        continue
+                await _click_primero_que_funcione(
+                    page,
+                    (
+                        "text=/DESCARGAR LISTADO/i",
+                        "a:has-text('DESCARGAR')",
+                        "button:has-text('DESCARGAR')",
+                    ),
+                    "Descargar listado",
+                )
             download = await dl_info.value
             tmp_path = await download.path()
 
-            # Convertir el CSV de windows-1252 a UTF-8 y normalizar
-            with open(tmp_path, "rb") as f:
-                raw = f.read()
+            # Convertir el CSV de windows-1252 a UTF-8 y eliminar la cabecera
+            # de consulta ("CONSULTA DE CENTROS Y SERVICIOS EDUCATIVOS;...").
+            raw = Path(tmp_path).read_bytes()
             text = raw.decode("windows-1252", errors="replace")
-            # Eliminar primera línea de cabecera de la consulta
-            lineas = [l for l in text.splitlines() if not l.startswith("CONSULTA DE CENTROS")]
-            text = "\n".join(lineas)
-            output.write_text(text, encoding="utf-8")
-
+            lineas = [
+                line for line in text.splitlines()
+                if not line.startswith("CONSULTA DE CENTROS")
+            ]
+            output.write_text("\n".join(lineas), encoding="utf-8")
         finally:
             await browser.close()
 
     print(f"✓ Listado guardado en {output}")
 
 
-def _leer_csv_centros(input_csv: Path) -> list[dict]:
+_RE_CODIGO_CENTRO = re.compile(r"^\d{8}$")
+
+
+def _leer_csv_centros(input_csv: Path) -> list[dict[str, object]]:
     """
     Lee el CSV de centros tolerando los dos formatos comunes:
       1) Bajado del buscador oficial: codificación windows-1252, separador `;`,
@@ -554,28 +582,39 @@ def _leer_csv_centros(input_csv: Path) -> list[dict]:
     else:
         text = raw.decode("utf-8", errors="replace")
 
-    # Saltar cabeceras de consulta y líneas vacías al principio
+    # Saltar cabeceras de consulta y líneas vacías al principio.
     lineas = text.splitlines()
-    while lineas and (not lineas[0].strip() or
-                      lineas[0].upper().startswith("CONSULTA DE CENTROS")):
+    while lineas and (not lineas[0].strip()
+                      or lineas[0].upper().startswith("CONSULTA DE CENTROS")):
         lineas.pop(0)
     text = "\n".join(lineas)
 
     sample = text[:2048]
     delim = ";" if sample.count(";") > sample.count(",") else ","
-    import io
     reader = csv.DictReader(io.StringIO(text), delimiter=delim)
 
-    centros: list[dict] = []
+    centros: list[dict[str, object]] = []
     for row in reader:
         codigo = (row.get("CODIGO CENTRO") or row.get("codigo") or
                   row.get("CODIGO") or row.get("CODIGO_CENTRO") or "").strip()
-        if codigo and codigo.isdigit():
+        if _RE_CODIGO_CENTRO.match(codigo):
             centros.append({"codigo": codigo, "row": row})
     return centros
 
 
-async def cmd_scrape(input_csv: Path, output_csv: Path, checkpoint_path: Path, headful: bool = False):
+def _cabeceras_compatibles(output_csv: Path, fieldnames: list[str]) -> bool:
+    """Comprueba que el CSV de salida existente tiene las mismas cabeceras."""
+    try:
+        with open(output_csv, encoding="utf-8", newline="") as f:
+            cabecera = next(csv.reader(f), None)
+    except OSError:
+        return False
+    return cabecera == fieldnames
+
+
+async def cmd_scrape(
+    input_csv: Path, output_csv: Path, checkpoint_path: Path, headful: bool = False,
+) -> None:
     """Itera sobre los centros del CSV y scrapea EvAU de cada uno."""
     centros = _leer_csv_centros(input_csv)
 
@@ -588,9 +627,14 @@ async def cmd_scrape(input_csv: Path, output_csv: Path, checkpoint_path: Path, h
     pendientes = [c for c in centros if c["codigo"] not in cp.hechos]
     print(f"Pendientes (sin completar): {len(pendientes)}")
 
-    # Cabeceras del CSV de salida
     fieldnames = list(ResultadoEvAU.__dataclass_fields__.keys())
     nuevo_archivo = not output_csv.exists()
+    if not nuevo_archivo and not _cabeceras_compatibles(output_csv, fieldnames):
+        raise SystemExit(
+            f"\n⚠️  {output_csv} ya existe pero sus cabeceras no coinciden con el "
+            f"esquema actual del scraper. Renómbralo o bórralo antes de continuar.\n"
+            f"   Esperado: {fieldnames}"
+        )
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=not headful)
@@ -609,39 +653,46 @@ async def cmd_scrape(input_csv: Path, output_csv: Path, checkpoint_path: Path, h
                 try:
                     meta, resultados, _ = await obtener_evau_de_centro(page, codigo)
                     if not resultados:
-                        # Aún así marcamos como hecho con una fila vacía para no reintentar
-                        empty = ResultadoEvAU(codigo_centro=codigo, **meta)
-                        writer.writerow(asdict(empty))
-                        fout.flush()
+                        # Marcamos como hecho con una fila vacía para no reintentar.
+                        writer.writerow(asdict(ResultadoEvAU(codigo_centro=codigo, **meta)))
                         cp.marcar_hecho(codigo)
-                        print(f"[{i}/{len(pendientes)}] {codigo} ({meta.get('nombre_centro', '?')[:35]}): "
-                              f"sin datos EvAU ({time.time()-t0:.1f}s)")
+                        estado = "sin datos EvAU"
                     else:
                         for r in resultados:
                             writer.writerow(asdict(r))
-                        fout.flush()
                         cp.marcar_hecho(codigo)
-                        print(f"[{i}/{len(pendientes)}] {codigo} ({meta.get('nombre_centro', '?')[:35]}): "
-                              f"{len(resultados)} cursos ({time.time()-t0:.1f}s)")
+                        estado = f"{len(resultados)} cursos"
+                    fout.flush()
+                    nombre = (meta.get("nombre_centro") or "?")[:35]
+                    print(f"[{i}/{len(pendientes)}] {codigo} ({nombre}): "
+                          f"{estado} ({time.time() - t0:.1f}s)")
                 except Exception as e:
                     cp.marcar_error(codigo, f"{type(e).__name__}: {e}")
-                    print(f"[{i}/{len(pendientes)}] {codigo}: ERROR — {type(e).__name__}: {str(e)[:80]}")
-
+                    print(f"[{i}/{len(pendientes)}] {codigo}: "
+                          f"ERROR — {type(e).__name__}: {str(e)[:80]}")
                 await random_delay()
 
         await browser.close()
 
     print(f"\n✓ Completado. Resultados en {output_csv}")
     if cp.errores:
-        print(f"⚠️  {len(cp.errores)} centros con error. Revisa {checkpoint_path} y vuelve a ejecutar para reintentarlos.")
+        print(f"⚠️  {len(cp.errores)} centros con error. Revisa {checkpoint_path} "
+              f"y vuelve a ejecutar para reintentarlos.")
 
 
 # =============================================================================
 # CLI
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="count", default=0,
+        help="Aumenta el nivel de logging (-v = INFO, -vv = DEBUG)",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_probar = sub.add_parser("probar", help="Diagnóstico: scrapea un solo centro")
@@ -659,6 +710,13 @@ def main():
     p_scrape.add_argument("--headful", action="store_true")
 
     args = parser.parse_args()
+
+    nivel = logging.WARNING if args.verbose == 0 else logging.INFO if args.verbose == 1 else logging.DEBUG
+    logging.basicConfig(
+        level=nivel,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     if args.cmd == "probar":
         asyncio.run(cmd_probar(args.codigo, headful=args.headful))

@@ -1,0 +1,19 @@
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["venv", "__pycache__"]
+
+[tool.ruff.lint]
+# E,F = errores básicos | I = ordenación de imports | B = bugbear (bugs comunes)
+# UP = pyupgrade (sintaxis moderna) | SIM = simplificaciones
+select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = [
+  "E501",  # line-too-long: ya capturado por line-length
+]
+
+[tool.ruff.lint.per-file-ignores]
+"test_parsers.py" = ["F401"]   # imports usados sólo en HTML literals
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]

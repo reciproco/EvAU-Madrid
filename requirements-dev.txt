@@ -1,0 +1,5 @@
+# Dependencias para desarrollo (tests, linter). No las necesitas para ejecutar
+# el scraper o construir la web — sólo si vas a contribuir.
+-r requirements.txt
+pytest>=8.0
+ruff>=0.6
