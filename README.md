@@ -3,7 +3,7 @@
 Web pública para consultar y comparar las notas medias de la EvAU (bloque
 obligatorio / fase general) de cada centro educativo de la Comunidad de Madrid.
 
-> 🔗 **Demo en vivo:** _añade aquí tu URL de GitHub Pages tras el primer despliegue (ej. `https://TU_USUARIO.github.io/ebau/`)_
+> 🔗 [demo](https://reciproco.github.io/EvAU-Madrid/)
 
 Incluye:
 
@@ -185,36 +185,6 @@ Estos son datos públicos publicados por la administración. Aun así:
   *Consejería de Educación, Universidades, Ciencia y Portavocía
   de la Comunidad de Madrid*.
 
-## Despliegue en GitHub Pages
-
-El repositorio incluye un workflow ([.github/workflows/pages.yml](.github/workflows/pages.yml))
-que despliega automáticamente la carpeta `web/` en GitHub Pages cada vez que
-hay un push a `main` que toque `web/**`.
-
-Pasos para activarlo (una sola vez):
-
-1. Crea el repo en GitHub (vacío) y conéctalo:
-   ```bash
-   git remote add origin git@github.com:TU_USUARIO/ebau.git
-   git branch -M main
-   git push -u origin main
-   ```
-2. En la web del repo: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-3. Comprueba en la pestaña **Actions** que el workflow *Deploy web to GitHub Pages* se ejecuta y termina en verde.
-4. La URL pública aparece en *Settings → Pages* (suele ser `https://TU_USUARIO.github.io/ebau/`).
-   Pégala arriba en este README.
-
-Para refrescar los datos publicados:
-
-```bash
-python scraper_evau_madrid.py scrape --input "28-04-2026-(985).csv" --output evau.csv
-python build_web.py
-git add evau.csv web/evau.js
-git commit -m "datos: refresco evau.csv"
-git push
-```
-
-El workflow sólo se dispara con cambios en `web/**`, así que el push refrescará la web pública en ~1 minuto.
 
 ## Licencia
 
