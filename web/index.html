@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EvAU Madrid — Comparador de centros</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>EvAU Madrid</h1>
+      <p id="meta" class="meta">Cargando…</p>
+    </div>
+    <div class="topbar-actions">
+      <span class="theme-hint">Pulsa una fila para ver la evolución del centro</span>
+    </div>
+  </header>
+
+  <section class="filters" aria-label="Filtros">
+    <input type="search" id="search" placeholder="Buscar por nombre o municipio…" autocomplete="off">
+    <select id="area">
+      <option value="">Todas las áreas</option>
+    </select>
+    <select id="titularidad">
+      <option value="">Toda titularidad</option>
+    </select>
+    <select id="curso" title="Curso para el ranking"></select>
+    <select id="metrica" title="Métrica del ranking">
+      <option value="nm">Nota media</option>
+      <option value="na">Nota media aptos</option>
+      <option value="pa">% aptos</option>
+      <option value="np">Nº presentados</option>
+    </select>
+    <button id="reset" type="button" class="ghost">Limpiar</button>
+  </section>
+
+  <main class="layout">
+    <section class="ranking" aria-label="Ranking">
+      <div class="ranking-head">
+        <span id="result-count">—</span>
+        <small id="curso-label"></small>
+      </div>
+      <div class="table-wrap">
+        <table id="table">
+          <thead>
+            <tr>
+              <th class="rank" data-sort="pos" title="Puesto en el ranking global de toda Madrid según la métrica seleccionada">Pos.</th>
+              <th data-sort="delta" class="num" title="Cambio de posición en el ranking global respecto al curso anterior">Δ</th>
+              <th data-sort="n">Centro</th>
+              <th data-sort="mun">Municipio</th>
+              <th data-sort="a">Área</th>
+              <th data-sort="tit">Titularidad</th>
+              <th data-sort="metric" class="num active">Métrica</th>
+              <th class="num">vs CM</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <aside class="detail" id="detail" aria-label="Detalle del centro">
+      <div class="detail-empty">
+        <p>Selecciona un centro de la lista para ver la evolución de sus notas a lo largo de los cursos.</p>
+        <p class="hint">Sugerencia: pulsa el botón <strong>+</strong> de varias filas para superponerlas en el gráfico.</p>
+      </div>
+    </aside>
+  </main>
+
+  <div id="compare-bar" class="compare-bar hidden" aria-live="polite">
+    <span id="compare-text"></span>
+    <button id="compare-show" type="button">Ver comparativa</button>
+    <button id="compare-clear" type="button" class="ghost">Quitar todos</button>
+  </div>
+
+  <dialog id="compare-dialog" class="compare-dialog">
+    <header>
+      <h2>Comparativa de centros</h2>
+      <button id="compare-close" type="button" aria-label="Cerrar">×</button>
+    </header>
+    <div class="metric-tabs" role="tablist">
+      <button data-metric="nm" class="active">Nota media</button>
+      <button data-metric="na">Nota media aptos</button>
+      <button data-metric="pa">% aptos</button>
+      <button data-metric="np">Nº presentados</button>
+    </div>
+    <div class="chart-host"><canvas id="compare-chart"></canvas></div>
+  </dialog>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="evau.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

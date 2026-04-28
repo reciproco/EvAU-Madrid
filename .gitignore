@@ -1,0 +1,19 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Estado del scraper (se regenera)
+checkpoint.json
+
+# HTML capturado para depuración (se regenera al fallar el scraping)
+debug_*.html
+
+# Sistema
+.DS_Store
+*.swp
+
+# Editor
+.vscode/
+.idea/
