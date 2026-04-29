@@ -385,14 +385,16 @@ tbody td.rank-delta-cell {
   height: 32px;
   padding: 0;
   background: var(--surface-2);
-  color: var(--text-soft);
+  color: var(--text);
   border: 1px solid var(--border);
   border-radius: 50%;
   font-size: 22px;
   line-height: 1;
   z-index: 1;
+  /* Sombra suave para despegarlo del contenido (gráfico, tabla...) */
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
 }
-.detail-close:hover { color: var(--text); }
+.detail-close:hover { background: var(--accent-soft); border-color: var(--accent); }
 .detail-backdrop {
   display: none;  /* sólo visible en móvil */
   position: fixed;
@@ -456,9 +458,17 @@ tbody td.rank-delta-cell {
   margin-bottom: 16px;
 }
 
+.detail-table-wrap {
+  margin-top: 8px;
+  /* Scroll horizontal interno si las 6 columnas no caben en el panel
+     (típicamente en móvil) — los headers no se cortan. */
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 .detail table {
   font-size: 12px;
-  margin-top: 8px;
+  margin-top: 0;
+  width: 100%;
 }
 .detail table thead th {
   position: static;
@@ -466,6 +476,9 @@ tbody td.rank-delta-cell {
   letter-spacing: 0;
   cursor: default;
   font-size: 11px;
+  white-space: nowrap;
+  vertical-align: bottom;
+  box-shadow: none;        /* anula la sombra inferior de la cabecera del ranking */
 }
 .detail table thead th, .detail table tbody td { padding: 6px 8px; }
 
@@ -517,19 +530,31 @@ dialog.compare-dialog {
 dialog::backdrop { background: rgba(10, 14, 22, .55); backdrop-filter: blur(2px); }
 dialog header {
   display: flex; justify-content: space-between; align-items: center;
+  gap: 10px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
 }
-dialog header h2 { margin: 0; font-size: 16px; }
+dialog header h2 {
+  margin: 0;
+  font-size: 16px;
+  /* Si el título es largo, que no empuje al botón fuera de pantalla. */
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 dialog header button {
-  background: transparent;
-  color: var(--text-soft);
-  border: none;
+  flex-shrink: 0;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
   font-size: 22px;
+  line-height: 1;
   width: 32px; height: 32px; padding: 0;
   border-radius: 50%;
 }
-dialog header button:hover { background: var(--surface-2); color: var(--text); }
+dialog header button:hover { background: var(--accent-soft); border-color: var(--accent); }
 .compare-dialog .metric-tabs { margin: 14px 16px 8px; }
 .compare-dialog .chart-host { height: 480px; padding: 0 16px 16px; }
 
@@ -554,12 +579,28 @@ dialog header button:hover { background: var(--surface-2); color: var(--text); }
 
 @media (max-width: 1024px) {
   .layout {
-    grid-template-columns: 1fr;
+    /* `minmax(0, 1fr)` en lugar de `1fr` para que la columna NO se ensanche
+       hasta acomodar la tabla (que en móvil puede ser más ancha que el
+       viewport). Sin esto, la página gana scroll horizontal y position:fixed
+       se calcula sobre el viewport extendido — el botón × del bottom sheet
+       queda fuera de pantalla. */
+    grid-template-columns: minmax(0, 1fr);
+    /* Sin grid-template-rows, las dos filas del grid son `auto` y el ranking
+       se expande para mostrar todas las filas, sin scroll interno y con la
+       página creciendo sin límite. */
+    grid-template-rows: minmax(320px, 1fr) auto;
     padding: 12px;
     gap: 12px;
   }
+  /* Defensivo: los grid items necesitan poder encogerse por debajo del tamaño
+     de su contenido para que la tabla scrolee dentro de .table-wrap en lugar
+     de empujar al padre. */
+  .ranking, .detail { min-width: 0; }
   .topbar { padding: 12px 14px; }
   .filters { padding: 10px 14px; }
+  /* En tablet ya no necesitamos min-height grande del detalle (no hay 2 cols
+     que igualar); deja que se ajuste al contenido. */
+  .detail { min-height: 0; }
 }
 
 @media (max-width: 720px) {
@@ -591,7 +632,38 @@ dialog header button:hover { background: var(--surface-2); color: var(--text); }
   tbody td:nth-child(6) {
     display: none;
   }
-  thead th, tbody td { padding: 8px 6px; }
+  thead th, tbody td { padding: 8px 4px; }
+
+  /* Forzamos table-layout fijo para que la columna CENTRO absorba el sobrante
+     y los nombres muy largos rompan dentro del ancho disponible (en lugar de
+     hacer crecer la tabla más allá del viewport). */
+  #table { table-layout: fixed; width: 100%; }
+  thead th:nth-child(1), tbody td:nth-child(1) { width: 34px; }   /* Pos. */
+  thead th:nth-child(2), tbody td:nth-child(2) { width: 56px; }   /* Δ */
+  /* nth-child(3) = Centro → absorbe el resto, no le ponemos width */
+  thead th:nth-child(7), tbody td:nth-child(7) { width: 64px; }   /* Métrica */
+  thead th:nth-child(8), tbody td:nth-child(8) { width: 78px; }   /* vs CM */
+
+  /* Los headers "Nota media aptos", "Nº presentados"... no caben en una sola
+     línea con anchos pequeños — permitimos que rompan, los centramos
+     verticalmente y quitamos uppercase + letter-spacing para hacerlos más
+     compactos. */
+  thead th {
+    white-space: normal;
+    line-height: 1.2;
+    vertical-align: middle;
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* Permitimos romper dentro de palabras (las "CPR INF-PRI-SEC..." son más
+     largas que cualquier columna razonable a este ancho). */
+  tbody td.center-name .center-name-text {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
 
   /* El panel de detalle pasa a ser un bottom-sheet deslizable. */
   .detail {
@@ -615,14 +687,49 @@ dialog header button:hover { background: var(--surface-2); color: var(--text); }
   /* El gráfico del detalle más bajo para que quepa en pantallas cortas. */
   .chart-host { height: 220px; }
 
-  /* Compare-bar más compacta. */
+  /* Tabla del detalle: compacta y con scroll horizontal interno. Los headers
+     mantienen white-space: nowrap para que no se rompan a media palabra. */
+  .detail-table-wrap {
+    /* Sangrado al borde del panel: aprovecha todo el ancho disponible. */
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .detail table { font-size: 11px; }
+  .detail table thead th,
+  .detail table tbody td { padding: 6px 6px; }
+
+  /* Tabs de métrica del detalle: con 4 botones tipo "Nota media aptos" /
+     "Nº presentados" no hay forma de que quepan en una pantalla de 360 px
+     sin romper feo. Solución: el contenedor ocupa exactamente el ancho del
+     panel y los tabs scrollean horizontalmente dentro. `width: 100%` (no
+     max-width) anula el `width: fit-content` del rule base, que con flex y
+     flex-shrink:0 hacía crecer al contenedor con sus hijos. */
+  .detail-metric-tabs {
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  .detail-metric-tabs button {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  /* Compare-bar más compacta: si no cabe en una línea, los botones envuelven
+     debajo del texto en lugar de salirse. */
   .compare-bar {
     bottom: 12px;
-    padding: 6px 6px 6px 12px;
+    padding: 8px 10px;
     font-size: 12px;
     max-width: calc(100vw - 16px);
+    flex-wrap: wrap;
+    justify-content: center;
+    border-radius: 12px;
   }
-  .compare-bar button { height: 28px; font-size: 11px; padding: 0 10px; }
+  .compare-bar button { height: 30px; font-size: 12px; padding: 0 12px; }
 
   /* Compare dialog ocupa toda la pantalla. */
   dialog.compare-dialog {
@@ -649,8 +756,8 @@ dialog header button:hover { background: var(--surface-2); color: var(--text); }
   .detail { order: 1; }
 }
 
-/* En móviles muy estrechos ocultamos también vs CM. */
-@media (max-width: 380px) {
+/* En móviles estrechos ocultamos también vs CM. */
+@media (max-width: 480px) {
   thead th:nth-child(8),
   tbody td:nth-child(8) { display: none; }
 }

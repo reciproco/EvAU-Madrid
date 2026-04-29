@@ -549,32 +549,34 @@ function renderDetail() {
       ).join("")}
     </div>
     <div class="chart-host"><canvas id="detail-chart"></canvas></div>
-    <table>
-      <thead>
-        <tr>
-          <th>Curso</th>
-          <th class="num">Nota media</th>
-          <th class="num">Nota CM</th>
-          <th class="num">Nº pres.</th>
-          <th class="num">% aptos</th>
-          <th class="num">Nota aptos</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${cursos.map(c => {
-          const r = centro.byCurso.get(c);
-          if (!r) return `<tr><td>${c.replace("-", "/")}</td><td colspan="5" class="num" style="color:var(--text-faint)">—</td></tr>`;
-          return `<tr>
-            <td>${c.replace("-", "/")}</td>
-            <td class="num">${fmt(r.nm, "nm")}</td>
-            <td class="num">${fmt(r.ncm, "nm")}</td>
-            <td class="num">${fmt(r.np, "np")}</td>
-            <td class="num">${fmt(r.pa, "pa")}</td>
-            <td class="num">${fmt(r.na, "na")}</td>
-          </tr>`;
-        }).join("")}
-      </tbody>
-    </table>
+    <div class="detail-table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Curso</th>
+            <th class="num">Nota media</th>
+            <th class="num">Nota CM</th>
+            <th class="num">Nº pres.</th>
+            <th class="num">% aptos</th>
+            <th class="num">Nota aptos</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${cursos.map(c => {
+            const r = centro.byCurso.get(c);
+            if (!r) return `<tr><td>${c.replace("-", "/")}</td><td colspan="5" class="num" style="color:var(--text-faint)">—</td></tr>`;
+            return `<tr>
+              <td>${c.replace("-", "/")}</td>
+              <td class="num">${fmt(r.nm, "nm")}</td>
+              <td class="num">${fmt(r.ncm, "nm")}</td>
+              <td class="num">${fmt(r.np, "np")}</td>
+              <td class="num">${fmt(r.pa, "pa")}</td>
+              <td class="num">${fmt(r.na, "na")}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
     <button type="button" class="add-compare-cta ${isComparing ? "on" : ""}" id="detail-compare-btn"
             aria-pressed="${isComparing}">
       ${isComparing ? "✓ En comparativa" : "+ Añadir a comparativa"}
